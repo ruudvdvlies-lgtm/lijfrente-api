@@ -6,9 +6,10 @@ app = FastAPI()
 
 def get_connection():
     return psycopg2.connect(
-        "postgresql://postgres.xxx:XQ%3fCge9gJaP9NE@aws-1-eu-west-1.pooler.supabase.com:5432/postgres",
+        "postgresql://postgres.stmgtktsoeneybgliggj:XQ%3fCge9gJaP9NE@aws-1-eu-west-1.pooler.supabase.com:5432/postgres",
         sslmode="require"
     )
+
 
 
 @app.get("/top5")
