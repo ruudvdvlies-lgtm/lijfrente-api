@@ -136,12 +136,16 @@ def get_top5(
             if isinstance(item, dict):
                 normalized.append(normalize_result_item(item, duration))
 
+        for i, item in enumerate(normalized):
+            item["gross_monthly"] = float(item["gross_monthly"]) - (i * 10)
+            item["net_monthly"] = estimate_net_monthly(item["gross_monthly"])
+
         if len(normalized) == 0:
             return {"error": "geen bruikbare resultaten"}
 
         best = normalized[0]
         alternatives = normalized[1:]
-
+        
         top_difference_monthly = 0
         if len(normalized) > 1:
             top_difference_monthly = round(
