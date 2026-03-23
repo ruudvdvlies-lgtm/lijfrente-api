@@ -6,11 +6,7 @@ app = FastAPI()
 
 def get_connection():
     return psycopg2.connect(
-        host="db.stmgtktsoeneybgliggj.supabase.co",
-        port=5432,
-        dbname="postgres",
-        user="postgres",
-        password="XQ%3fCge9gJaP9NE",
+        "postgresql://postgres.xxx:XQ%3fCge9gJaP9NE@aws-1-eu-west-1.pooler.supabase.com:5432/postgres",
         sslmode="require"
     )
 
