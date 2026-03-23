@@ -1,142 +1,106 @@
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+import os
 import psycopg2
+import json
 
 app = FastAPI()
 
+@app.get("/")
+def root():
+    return {"status": "api werkt"}
 
 def get_connection():
     return psycopg2.connect(
-        "postgresql://postgres.stmgtktsoeneybgliggj:XQ%3fCge9gJaP9NE@aws-1-eu-west-1.pooler.supabase.com:5432/postgres",
+        os.environ["DATABASE_URL"],
         sslmode="require"
     )
 
-
-
 @app.get("/top5")
 def get_top5(amount: int, age: int, duration: int):
-    conn = get_connection()
-    cur = conn.cursor()
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
 
-    # Alle verified records ophalen
-    cur.execute(
-        """
-        select
-            p.provider_name,
-            np.product_name,
-            np.product_variant,
-            nr.monthly_payout,
-            nr.rate_value
-        from normalized_rates nr
-        join normalized_products np
-            on np.id = nr.normalized_product_id
-        join providers p
-            on p.id = nr.provider_id
-        where nr.scenario_amount = %s
-          and nr.scenario_age = %s
-          and nr.scenario_duration = %s
-          and nr.is_verified = true
-        order by nr.monthly_payout desc
-        """,
-        (amount, age, duration)
-    )
-    verified_rows = cur.fetchall()
+        cur.execute(
+            """
+            select results
+            from rankings
+            where scenario_amount = %s
+              and scenario_age = %s
+              and scenario_duration = %s
+            order by created_at desc
+            limit 1
+            """,
+            (amount, age, duration)
+        )
 
-    # Indicatieve records ophalen
-    cur.execute(
-        """
-        select
-            p.provider_name,
-            np.product_name,
-            np.product_variant,
-            nr.monthly_payout,
-            nr.rate_value
-        from normalized_rates nr
-        join normalized_products np
-            on np.id = nr.normalized_product_id
-        join providers p
-            on p.id = nr.provider_id
-        where nr.scenario_amount = %s
-          and nr.scenario_age = %s
-          and nr.scenario_duration = %s
-          and nr.is_verified = false
-        order by nr.monthly_payout desc
-        """,
-        (amount, age, duration)
-    )
-    indicative_rows = cur.fetchall()
+        row = cur.fetchone()
 
-    cur.close()
-    conn.close()
+        cur.close()
+        conn.close()
 
-    # Dedupe: per provider alleen hoogste verified record behouden
-    seen_providers = set()
-    official_rows = []
+        if not row:
+            return {"error": "geen data"}
 
-    for row in verified_rows:
-        provider_name = row[0]
-        if provider_name not in seen_providers:
-            official_rows.append(row)
-            seen_providers.add(provider_name)
+        results = row[0]
 
-    official_rows = official_rows[:5]
+        if isinstance(results, str):
+            results = json.loads(results)
 
-    # Geen officiële data
-    if not official_rows:
+        if isinstance(results, dict):
+            if "best_choice" in results:
+                return results
+            return {
+                "error": "onverwachte dict-structuur in results",
+                "debug_type": str(type(results)),
+                "debug_preview": str(results)[:500]
+            }
+
+        if not isinstance(results, list):
+            return {
+                "error": "results is geen lijst",
+                "debug_type": str(type(results)),
+                "debug_preview": str(results)[:500]
+            }
+
+        if len(results) == 0:
+            return {"error": "lege results-lijst"}
+
+        best = results[0]
+
+        if not isinstance(best, dict):
+            return {
+                "error": "eerste item in results is geen dict",
+                "debug_type": str(type(best)),
+                "debug_preview": str(best)[:500]
+            }
+
+        alternatives = []
+        for r in results[1:]:
+            if isinstance(r, dict):
+                alternatives.append(
+                    {
+                        "provider": r.get("provider_name"),
+                        "monthly": r.get("monthly_payout"),
+                        "rate": r.get("rate_value"),
+                    }
+                )
+
         return {
-            "best_choice": None,
-            "alternatives": [],
-            "indicative": [
-                {
-                    "provider": row[0],
-                    "product_name": row[1],
-                    "product_variant": row[2],
-                    "monthly": float(row[3]),
-                    "rate": float(row[4]),
-                    "label": "indicatief"
-                }
-                for row in indicative_rows
-            ]
+            "best_choice": {
+                "provider": best.get("provider_name"),
+                "monthly": best.get("monthly_payout"),
+                "rate": best.get("rate_value"),
+            },
+            "alternatives": alternatives,
         }
 
-    # Beste keuze
-    best = official_rows[0]
-    best_choice = {
-        "provider": best[0],
-        "product_name": best[1],
-        "product_variant": best[2],
-        "monthly": float(best[3]),
-        "rate": float(best[4])
-    }
-
-    # Alternatieven
-    alternatives = []
-    for row in official_rows[1:]:
-        alternatives.append(
-            {
-                "provider": row[0],
-                "product_name": row[1],
-                "product_variant": row[2],
-                "monthly": float(row[3]),
-                "rate": float(row[4])
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "serverfout in /top5",
+                "details": str(e)
             }
         )
-
-    # Indicatieve aanbieders
-    indicative = []
-    for row in indicative_rows:
-        indicative.append(
-            {
-                "provider": row[0],
-                "product_name": row[1],
-                "product_variant": row[2],
-                "monthly": float(row[3]),
-                "rate": float(row[4]),
-                "label": "indicatief"
-            }
-        )
-
-    return {
-        "best_choice": best_choice,
-        "alternatives": alternatives,
-        "indicative": indicative
-    }
