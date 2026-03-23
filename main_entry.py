@@ -138,10 +138,24 @@ def get_top5(
 
         providers = ["Brand New Day", "NN", "ASR", "Aegon", "Scildon"]
 
+        providers = ["Brand New Day", "NN", "ASR", "Aegon", "Scildon"]
+        products = [
+            "Brand New Day Banksparen",
+            "NN Tijdelijke Lijfrente",
+            "a.s.r. Lijfrente Uitkering",
+            "Aegon Uitkeerrekening",
+            "Scildon Direct Ingaand"
+        ]
+
         for i, item in enumerate(normalized):
-            print("DEBUG DIFFERENCES LOOP RUNS")
+            item["provider"] = providers[i % len(providers)]
+            item["product_name"] = products[i % len(products)]
+
             item["gross_monthly"] = float(item["gross_monthly"]) - (i * 10)
             item["net_monthly"] = estimate_net_monthly(item["gross_monthly"])
+
+            item["data_source_type"] = "model"
+            item["data_source_label"] = "Indicatie (simulatie)"
 
         if len(normalized) == 0:
             return {"error": "geen bruikbare resultaten"}
