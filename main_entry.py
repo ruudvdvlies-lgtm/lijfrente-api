@@ -145,7 +145,9 @@ def get_top5(
         top_difference_monthly = 0
         if len(normalized) > 1:
             top_difference_monthly = round(
-                float(best["gross_monthly"]) - float(normalized[1]["gross_monthly"]),
+                abs(
+                   float(best["gross_monthly"]) - float(normalized[1]["gross_monthly"])
+                ),
                 2
             )
 
