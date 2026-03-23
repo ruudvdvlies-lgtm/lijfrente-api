@@ -135,7 +135,9 @@ def get_top5(
         for item in results:
             if isinstance(item, dict):
                 normalized.append(normalize_result_item(item, duration))
-        
+
+        providers = ["Brand New Day", "NN", "ASR", "Aegon", "Scildon"]
+
         for i, item in enumerate(normalized):
             print("DEBUG DIFFERENCES LOOP RUNS")
             item["gross_monthly"] = float(item["gross_monthly"]) - (i * 10)
