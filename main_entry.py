@@ -17,57 +17,39 @@ BANK_DURATIONS = [5, 10, 15, 20]
 
 def fetch_single_duration(product, duration):
     """
-    Simulatie van echte aanbiederdata (per duration verschillend).
-    Dit is de stap tussen fake logica en echte scraping.
+    Koppeling met rente (voorbereid op echte scraping).
     """
 
-    # Simuleer dat elke aanbieder eigen tarieven heeft
+    # 🔥 tijdelijke “scraped” rente (later vervangen door echte scraper)
+    scraped_rates = {
+        "nn_basis": {
+            5: 3.2,
+            10: 3.3,
+            15: 3.4,
+            20: 3.5
+        },
+        "nn_extra": {
+            5: 3.3,
+            10: 3.4,
+            15: 3.5,
+            20: 3.6
+        }
+    }
+
     provider = product["external_product_key"]
 
-    # Basis tarieven per aanbieder (verschillend!)
-    provider_base = {
-        "nn_basis": 510,
-        "nn_extra": 540,
-    }
+    # fallback naar bestaande rate als niet gevonden
+    rate = scraped_rates.get(provider, {}).get(duration, product["rate"])
 
-    base_payout = provider_base.get(provider, 500)
+    amount = product["scenario_amount"]
+    months = duration * 12
+    monthly_rate = rate / 100 / 12
 
-    # Simuleer echte looptijdverschillen (niet lineair!)
-    duration_factors = {
-        5: 1.70,
-        10: 1.35,
-        15: 1.18,
-        20: 1.00
-    }
-
-    factor = duration_factors.get(duration, 1.0)
-
-    payout = base_payout * factor
-
-    return {
-        "external_product_key": product["external_product_key"],
-        "product_name": product["product_name"],
-        "product_variant": product["product_variant"],
-        "scenario_amount": product["scenario_amount"],
-        "scenario_age": product["scenario_age"],
-        "scenario_duration": duration,
-        "monthly_payout": round(payout, 2),
-        "rate": product["rate"],
-        "product_type": "bank",
-        "life_is_real": False,
-        "derived_from": None,
-        "scrape_date": datetime.now().strftime("%Y-%m-%d")
-    }
-    base_payout = product["monthly_payout"]
-
-    if duration == 5:
-        payout = base_payout * 1.60
-    elif duration == 10:
-        payout = base_payout * 1.30
-    elif duration == 15:
-        payout = base_payout * 1.15
+    # annuïteiten berekening
+    if monthly_rate > 0:
+        payout = amount * (monthly_rate / (1 - (1 + monthly_rate) ** -months))
     else:
-        payout = base_payout
+        payout = amount / months
 
     return {
         "external_product_key": product["external_product_key"],
@@ -77,7 +59,7 @@ def fetch_single_duration(product, duration):
         "scenario_age": product["scenario_age"],
         "scenario_duration": duration,
         "monthly_payout": round(payout, 2),
-        "rate": product["rate"],
+        "rate": rate,
         "product_type": "bank",
         "life_is_real": False,
         "derived_from": None,
@@ -92,6 +74,7 @@ def build_multi_duration_product(product):
         row = fetch_single_duration(product, duration)
         results.append(row)
 
+    # life = kopie van 20 jaar (bankproduct)
     row_20 = next((r for r in results if r["scenario_duration"] == 20), None)
 
     if row_20:
@@ -129,7 +112,7 @@ def get_base_data():
 
 @app.get("/")
 def root():
-    return {"status": "api werkt", "version": "TEST-MULTI-002"}
+    return {"status": "api werkt", "version": "TEST-MULTI-003"}
 
 
 @app.get("/debug")
@@ -139,7 +122,7 @@ def debug():
         all_results.extend(build_multi_duration_product(product))
 
     return {
-        "version": "TEST-MULTI-002",
+        "version": "TEST-MULTI-003",
         "count": len(all_results),
         "data": all_results
     }
@@ -156,6 +139,7 @@ def get_top5(
         all_results.extend(build_multi_duration_product(product))
 
     duration_input = duration.strip().lower()
+
     if duration_input == "life":
         requested_duration = "life"
     else:
@@ -174,7 +158,7 @@ def get_top5(
     filtered = sorted(filtered, key=lambda x: x["monthly_payout"], reverse=True)
 
     return {
-        "version": "TEST-MULTI-002",
+        "version": "TEST-MULTI-003",
         "requested": {
             "amount": amount,
             "age": age,
