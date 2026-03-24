@@ -1,206 +1,283 @@
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-import os
-import psycopg2
-import json
-from datetime import date
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime
+from pathlib import Path
+import pandas as pd
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+BANK_DURATIONS = [5, 10, 15, 20]
+CSV_PATH = Path("scraped_rates.csv")
+
+# Mapping van jouw API-producten naar echte product_id in scraped_rates.csv
+PRODUCT_ID_MAP = {
+    "nn_basis": "NATIONALE-NEDERLANDEN_NNLIJF",
+    "nn_extra": "NATIONALE-NEDERLANDEN_NNLIJF",
+}
+
+
+def load_scraped_rates():
+    if not CSV_PATH.exists():
+        return None
+
+    try:
+        df = pd.read_csv(CSV_PATH)
+    except Exception:
+        return None
+
+    required_columns = {
+        "product_id",
+        "min_looptijd_maanden",
+        "max_looptijd_maanden",
+        "rente_percentage",
+    }
+
+    if not required_columns.issubset(df.columns):
+        return None
+
+    return df
+
+
+def find_best_rate_from_csv(mapped_product_id, duration_years, df_rates):
+    if df_rates is None:
+        return None
+
+    months = duration_years * 12
+
+    df_provider = df_rates[df_rates["product_id"].astype(str) == str(mapped_product_id)].copy()
+    if df_provider.empty:
+        return None
+
+    df_provider["min_looptijd_maanden"] = pd.to_numeric(
+        df_provider["min_looptijd_maanden"], errors="coerce"
+    )
+    df_provider["max_looptijd_maanden"] = pd.to_numeric(
+        df_provider["max_looptijd_maanden"], errors="coerce"
+    )
+    df_provider["rente_percentage"] = pd.to_numeric(
+        df_provider["rente_percentage"], errors="coerce"
+    )
+
+    df_provider = df_provider.dropna(
+        subset=["min_looptijd_maanden", "max_looptijd_maanden", "rente_percentage"]
+    )
+
+    if df_provider.empty:
+        return None
+
+    # Eerst proberen op exacte match binnen range
+    exact_match = df_provider[
+        (df_provider["min_looptijd_maanden"] <= months) &
+        (df_provider["max_looptijd_maanden"] >= months)
+    ]
+
+    if not exact_match.empty:
+        try:
+            return float(exact_match.iloc[0]["rente_percentage"])
+        except Exception:
+            pass
+
+    # Anders dichtstbijzijnde min_looptijd pakken
+    df_provider["distance"] = (df_provider["min_looptijd_maanden"] - months).abs()
+    nearest = df_provider.sort_values(by=["distance", "min_looptijd_maanden"]).iloc[0]
+
+    try:
+        return float(nearest["rente_percentage"])
+    except Exception:
+        return None
+
+
+def get_rate_from_csv_or_fallback(product_key, duration, fallback_rate, df_rates):
+    mapped_product_id = PRODUCT_ID_MAP.get(product_key)
+
+    if mapped_product_id:
+        csv_rate = find_best_rate_from_csv(mapped_product_id, duration, df_rates)
+        if csv_rate is not None:
+            return csv_rate
+
+    # fallback testdata als CSV niets bruikbaars geeft
+    fallback_scraped_rates = {
+        "nn_basis": {
+            5: 3.2,
+            10: 3.3,
+            15: 3.4,
+            20: 3.5
+        },
+        "nn_extra": {
+            5: 3.3,
+            10: 3.4,
+            15: 3.5,
+            20: 3.6
+        }
+    }
+
+    return fallback_scraped_rates.get(product_key, {}).get(duration, fallback_rate)
+
+
+def calculate_monthly_payout(amount, annual_rate_percent, duration_years):
+    months = duration_years * 12
+    monthly_rate = annual_rate_percent / 100 / 12
+
+    if monthly_rate > 0:
+        payout = amount * (monthly_rate / (1 - (1 + monthly_rate) ** -months))
+    else:
+        payout = amount / months
+
+    return round(payout, 2)
+
+
+def fetch_single_duration(product, duration, df_rates):
+    provider = product["external_product_key"]
+
+    rate = get_rate_from_csv_or_fallback(
+        product_key=provider,
+        duration=duration,
+        fallback_rate=product["rate"],
+        df_rates=df_rates
+    )
+
+    payout = calculate_monthly_payout(
+        amount=product["scenario_amount"],
+        annual_rate_percent=rate,
+        duration_years=duration
+    )
+
+    return {
+        "external_product_key": product["external_product_key"],
+        "product_name": product["product_name"],
+        "product_variant": product["product_variant"],
+        "scenario_amount": product["scenario_amount"],
+        "scenario_age": product["scenario_age"],
+        "scenario_duration": duration,
+        "monthly_payout": payout,
+        "rate": rate,
+        "product_type": "bank",
+        "life_is_real": False,
+        "derived_from": None,
+        "scrape_date": datetime.now().strftime("%Y-%m-%d")
+    }
+
+
+def build_multi_duration_product(product, df_rates):
+    results = []
+
+    for duration in BANK_DURATIONS:
+        row = fetch_single_duration(product, duration, df_rates)
+        results.append(row)
+
+    # life = kopie van 20 jaar (bankproduct)
+    row_20 = next((r for r in results if r["scenario_duration"] == 20), None)
+
+    if row_20:
+        life_row = row_20.copy()
+        life_row["scenario_duration"] = "life"
+        life_row["derived_from"] = 20
+        life_row["life_is_real"] = False
+        results.append(life_row)
+
+    return results
+
+
+def get_base_data():
+    return [
+        {
+            "external_product_key": "nn_basis",
+            "product_name": "NN Basis",
+            "product_variant": "Standaard",
+            "scenario_amount": 100000,
+            "scenario_age": 67,
+            "monthly_payout": 510.00,
+            "rate": 3.10
+        },
+        {
+            "external_product_key": "nn_extra",
+            "product_name": "NN Extra",
+            "product_variant": "Plus",
+            "scenario_amount": 100000,
+            "scenario_age": 67,
+            "monthly_payout": 540.00,
+            "rate": 3.45
+        }
+    ]
 
 
 @app.get("/")
 def root():
-    return {"status": "api werkt"}
-
-
-def get_connection():
-    return psycopg2.connect(
-        os.environ["DATABASE_URL"],
-        sslmode="require"
-    )
-
-
-def estimate_net_monthly(gross_monthly: float, tax_factor: float = 0.73) -> float:
-    try:
-        return round(float(gross_monthly) * tax_factor, 2)
-    except Exception:
-        return 0.0
-
-
-def source_label(source_type: str) -> str:
-    mapping = {
-        "live_scraped": "Actueel tarief",
-        "provider_feed": "Aanbiederdata",
-        "modeled": "Indicatie (simulatie)",
-        "hybrid": "Actuele data + berekening",
+    csv_loaded = CSV_PATH.exists()
+    return {
+        "status": "api werkt",
+        "version": "TEST-MULTI-005",
+        "csv_found": csv_loaded
     }
-    return mapping.get(source_type, "Indicatie")
 
 
-def normalize_result_item(item: dict, fallback_duration: int) -> dict:
-    gross = float(item.get("monthly_payout", 0) or 0)
-    source_type = item.get("data_source_type", "modeled")
+@app.get("/debug")
+def debug():
+    df_rates = load_scraped_rates()
 
-    why_this_option = item.get("why_this_option")
-    if not isinstance(why_this_option, list) or len(why_this_option) == 0:
-        why_this_option = [
-            "Gebaseerd op uw gekozen looptijd en producttype",
-            "Vergeleken op uitkering, kosten en productkenmerken",
-            "Indicatie op basis van actuele beschikbare data",
-        ]
+    all_results = []
+    for product in get_base_data():
+        all_results.extend(build_multi_duration_product(product, df_rates))
 
     return {
-        "provider": item.get("provider_name"),
-        "product_name": item.get("product_name", item.get("provider_name")),
-        "gross_monthly": gross,
-        "net_monthly": estimate_net_monthly(gross),
-        "rate": item.get("rate_value"),
-        "duration_years": item.get("duration_years", fallback_duration),
-        "one_off_costs": item.get("one_off_costs", 0),
-        "periodic_costs": item.get("periodic_costs", 0),
-        "fixed_costs_monthly": item.get("fixed_costs_monthly", 0),
-        "score_total": item.get("score_total", 0),
-        "score_breakdown": {
-            "payout": item.get("score_payout", 0),
-            "costs": item.get("score_costs", 0),
-            "match": item.get("score_match", 0),
-            "quality": item.get("score_quality", 0),
-        },
-        "data_source_type": source_type,
-        "data_source_label": source_label(source_type),
-        "data_last_updated": item.get("data_last_updated", str(date.today())),
-        "why_this_option": why_this_option,
+        "version": "TEST-MULTI-005",
+        "csv_found": CSV_PATH.exists(),
+        "csv_loaded": df_rates is not None,
+        "product_id_map": PRODUCT_ID_MAP,
+        "count": len(all_results),
+        "data": all_results
     }
 
 
 @app.get("/top5")
 def get_top5(
-    amount: int,
-    age: int,
-    duration: int,
-    start_date: str = "2026-06-01",
-    frequency: str = "maandelijks",
-    regime: str = "nieuw_regime"
+    amount: float = Query(...),
+    age: int = Query(...),
+    duration: str = Query(...)
 ):
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
+    df_rates = load_scraped_rates()
 
-        cur.execute(
-            """
-            select results
-            from rankings
-            where scenario_amount = %s
-              and scenario_age = %s
-              and scenario_duration = %s
-            order by created_at desc
-            limit 1
-            """,
-            (amount, age, duration)
-        )
+    all_results = []
+    for product in get_base_data():
+        all_results.extend(build_multi_duration_product(product, df_rates))
 
-        row = cur.fetchone()
+    duration_input = duration.strip().lower()
 
-        cur.close()
-        conn.close()
+    if duration_input == "life":
+        requested_duration = "life"
+    else:
+        try:
+            requested_duration = int(duration_input)
+        except ValueError:
+            return {"error": f"ongeldige duration: {duration}"}
 
-        if not row:
-            return {"error": "geen data"}
+    filtered = [
+        row for row in all_results
+        if row["scenario_amount"] == amount
+        and row["scenario_age"] == age
+        and row["scenario_duration"] == requested_duration
+    ]
 
-        results = row[0]
+    filtered = sorted(filtered, key=lambda x: x["monthly_payout"], reverse=True)
 
-        if isinstance(results, str):
-            results = json.loads(results)
-
-        if isinstance(results, dict):
-            if "best_choice" in results:
-                return results
-            return {
-                "error": "onverwachte dict-structuur in results",
-                "debug_type": str(type(results)),
-                "debug_preview": str(results)[:500]
-            }
-
-        if not isinstance(results, list):
-            return {
-                "error": "results is geen lijst",
-                "debug_type": str(type(results)),
-                "debug_preview": str(results)[:500]
-            }
-
-        if len(results) == 0:
-            return {"error": "lege results-lijst"}
-
-        normalized = []
-        for item in results:
-            if isinstance(item, dict):
-                normalized.append(normalize_result_item(item, duration))
-
-        if len(normalized) == 0:
-            return {"error": "geen bruikbare resultaten"}
-
-        providers = ["Brand New Day", "NN", "ASR", "Aegon", "Scildon"]
-        products = [
-            "Brand New Day Banksparen",
-            "NN Tijdelijke Lijfrente",
-            "a.s.r. Lijfrente Uitkering",
-            "Aegon Uitkeerrekening",
-            "Scildon Direct Ingaand"
-        ]
-
-        for i, item in enumerate(normalized):
-            item["provider"] = providers[i % len(providers)]
-            item["product_name"] = products[i % len(products)]
-
-            # Tijdelijke simulatieverschillen zodat de frontend echte ranking toont
-            item["gross_monthly"] = float(item["gross_monthly"]) - (i * 10)
-            item["net_monthly"] = estimate_net_monthly(item["gross_monthly"])
-
-            item["data_source_type"] = "modeled"
-            item["data_source_label"] = "Indicatie (simulatie)"
-
-        best = normalized[0]
-        alternatives = normalized[1:]
-
-        top_difference_monthly = 0
-        if len(normalized) > 1:
-            top_difference_monthly = round(
-                abs(
-                    float(best["gross_monthly"]) - float(normalized[1]["gross_monthly"])
-                ),
-                2
-            )
-
-        response = {
-            "summary": {
-                "amount": amount,
-                "age": age,
-                "duration_years": duration,
-                "start_date": start_date,
-                "frequency": frequency,
-                "regime": regime,
-                "providers_compared": len(normalized),
-                "last_updated": best.get("data_last_updated"),
-                "best_gross_monthly": best["gross_monthly"],
-                "best_net_monthly": best["net_monthly"]
-            },
-            "best_choice": best,
-            "alternatives": alternatives,
-            "comparison_meta": {
-                "gross_net_note": "Netto is een indicatieve berekening en geen persoonlijk belastingadvies.",
-                "ranking_note": "De rangorde is gebaseerd op uitkering, kosten, productmatch en kwaliteit.",
-                "advice_recommended": top_difference_monthly <= 25 if len(normalized) > 1 else False,
-                "top_difference_monthly": top_difference_monthly
-            }
-        }
-
-        return response
-
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "serverfout in /top5",
-                "details": str(e)
-            }
-        )
+    return {
+        "version": "TEST-MULTI-005",
+        "csv_found": CSV_PATH.exists(),
+        "csv_loaded": df_rates is not None,
+        "requested": {
+            "amount": amount,
+            "age": age,
+            "duration": requested_duration
+        },
+        "available_durations": sorted(list(set(str(r["scenario_duration"]) for r in all_results))),
+        "filtered_count": len(filtered),
+        "data": filtered
+    }
