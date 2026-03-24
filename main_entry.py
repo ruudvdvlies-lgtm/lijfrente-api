@@ -31,7 +31,7 @@ def source_label(source_type: str) -> str:
     mapping = {
         "live_scraped": "Actueel tarief",
         "provider_feed": "Aanbiederdata",
-        "modeled": "Indicatieve berekening",
+        "modeled": "Indicatie (simulatie)",
         "hybrid": "Actuele data + berekening",
     }
     return mapping.get(source_type, "Indicatie")
@@ -39,7 +39,7 @@ def source_label(source_type: str) -> str:
 
 def normalize_result_item(item: dict, fallback_duration: int) -> dict:
     gross = float(item.get("monthly_payout", 0) or 0)
-    source_type = item.get("data_source_type", "live_scraped")
+    source_type = item.get("data_source_type", "modeled")
 
     why_this_option = item.get("why_this_option")
     if not isinstance(why_this_option, list) or len(why_this_option) == 0:
@@ -59,12 +59,12 @@ def normalize_result_item(item: dict, fallback_duration: int) -> dict:
         "one_off_costs": item.get("one_off_costs", 0),
         "periodic_costs": item.get("periodic_costs", 0),
         "fixed_costs_monthly": item.get("fixed_costs_monthly", 0),
-        "score_total": item.get("score_total"),
+        "score_total": item.get("score_total", 0),
         "score_breakdown": {
-            "payout": item.get("score_payout"),
-            "costs": item.get("score_costs"),
-            "match": item.get("score_match"),
-            "quality": item.get("score_quality"),
+            "payout": item.get("score_payout", 0),
+            "costs": item.get("score_costs", 0),
+            "match": item.get("score_match", 0),
+            "quality": item.get("score_quality", 0),
         },
         "data_source_type": source_type,
         "data_source_label": source_label(source_type),
@@ -136,7 +136,8 @@ def get_top5(
             if isinstance(item, dict):
                 normalized.append(normalize_result_item(item, duration))
 
-        providers = ["Brand New Day", "NN", "ASR", "Aegon", "Scildon"]
+        if len(normalized) == 0:
+            return {"error": "geen bruikbare resultaten"}
 
         providers = ["Brand New Day", "NN", "ASR", "Aegon", "Scildon"]
         products = [
@@ -151,23 +152,21 @@ def get_top5(
             item["provider"] = providers[i % len(providers)]
             item["product_name"] = products[i % len(products)]
 
+            # Tijdelijke simulatieverschillen zodat de frontend echte ranking toont
             item["gross_monthly"] = float(item["gross_monthly"]) - (i * 10)
             item["net_monthly"] = estimate_net_monthly(item["gross_monthly"])
 
-            item["data_source_type"] = "model"
+            item["data_source_type"] = "modeled"
             item["data_source_label"] = "Indicatie (simulatie)"
-
-        if len(normalized) == 0:
-            return {"error": "geen bruikbare resultaten"}
 
         best = normalized[0]
         alternatives = normalized[1:]
-        
+
         top_difference_monthly = 0
         if len(normalized) > 1:
             top_difference_monthly = round(
                 abs(
-                   float(best["gross_monthly"]) - float(normalized[1]["gross_monthly"])
+                    float(best["gross_monthly"]) - float(normalized[1]["gross_monthly"])
                 ),
                 2
             )
