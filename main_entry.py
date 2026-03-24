@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
+from pathlib import Path
+import pandas as pd
 
 app = FastAPI()
 
@@ -13,15 +15,51 @@ app.add_middleware(
 )
 
 BANK_DURATIONS = [5, 10, 15, 20]
+CSV_PATH = Path("scraped_rates.csv")
 
 
-def fetch_single_duration(product, duration):
-    """
-    Koppeling met rente (voorbereid op echte scraping).
-    """
+def load_scraped_rates():
+    if not CSV_PATH.exists():
+        return None
 
-    # 🔥 tijdelijke “scraped” rente (later vervangen door echte scraper)
-    scraped_rates = {
+    try:
+        df = pd.read_csv(CSV_PATH)
+    except Exception:
+        return None
+
+    required_columns = {
+        "product_id",
+        "min_looptijd_maanden",
+        "max_looptijd_maanden",
+        "rente_percentage",
+    }
+
+    if not required_columns.issubset(df.columns):
+        return None
+
+    return df
+
+
+def get_rate_from_csv_or_fallback(product_key, duration, fallback_rate, df_rates):
+    months = duration * 12
+
+    if df_rates is not None:
+        df_provider = df_rates[df_rates["product_id"].astype(str) == str(product_key)]
+
+        if not df_provider.empty:
+            match = df_provider[
+                (pd.to_numeric(df_provider["min_looptijd_maanden"], errors="coerce") <= months) &
+                (pd.to_numeric(df_provider["max_looptijd_maanden"], errors="coerce") >= months)
+            ]
+
+            if not match.empty:
+                try:
+                    return float(match.iloc[0]["rente_percentage"])
+                except Exception:
+                    pass
+
+    # fallback testdata als CSV niets bruikbaars geeft
+    fallback_scraped_rates = {
         "nn_basis": {
             5: 3.2,
             10: 3.3,
@@ -36,20 +74,36 @@ def fetch_single_duration(product, duration):
         }
     }
 
-    provider = product["external_product_key"]
+    return fallback_scraped_rates.get(product_key, {}).get(duration, fallback_rate)
 
-    # fallback naar bestaande rate als niet gevonden
-    rate = scraped_rates.get(provider, {}).get(duration, product["rate"])
 
-    amount = product["scenario_amount"]
-    months = duration * 12
-    monthly_rate = rate / 100 / 12
+def calculate_monthly_payout(amount, annual_rate_percent, duration_years):
+    months = duration_years * 12
+    monthly_rate = annual_rate_percent / 100 / 12
 
-    # annuïteiten berekening
     if monthly_rate > 0:
         payout = amount * (monthly_rate / (1 - (1 + monthly_rate) ** -months))
     else:
         payout = amount / months
+
+    return round(payout, 2)
+
+
+def fetch_single_duration(product, duration, df_rates):
+    provider = product["external_product_key"]
+
+    rate = get_rate_from_csv_or_fallback(
+        product_key=provider,
+        duration=duration,
+        fallback_rate=product["rate"],
+        df_rates=df_rates
+    )
+
+    payout = calculate_monthly_payout(
+        amount=product["scenario_amount"],
+        annual_rate_percent=rate,
+        duration_years=duration
+    )
 
     return {
         "external_product_key": product["external_product_key"],
@@ -58,7 +112,7 @@ def fetch_single_duration(product, duration):
         "scenario_amount": product["scenario_amount"],
         "scenario_age": product["scenario_age"],
         "scenario_duration": duration,
-        "monthly_payout": round(payout, 2),
+        "monthly_payout": payout,
         "rate": rate,
         "product_type": "bank",
         "life_is_real": False,
@@ -67,14 +121,13 @@ def fetch_single_duration(product, duration):
     }
 
 
-def build_multi_duration_product(product):
+def build_multi_duration_product(product, df_rates):
     results = []
 
     for duration in BANK_DURATIONS:
-        row = fetch_single_duration(product, duration)
+        row = fetch_single_duration(product, duration, df_rates)
         results.append(row)
 
-    # life = kopie van 20 jaar (bankproduct)
     row_20 = next((r for r in results if r["scenario_duration"] == 20), None)
 
     if row_20:
@@ -112,17 +165,26 @@ def get_base_data():
 
 @app.get("/")
 def root():
-    return {"status": "api werkt", "version": "TEST-MULTI-003"}
+    csv_loaded = CSV_PATH.exists()
+    return {
+        "status": "api werkt",
+        "version": "TEST-MULTI-004",
+        "csv_found": csv_loaded
+    }
 
 
 @app.get("/debug")
 def debug():
+    df_rates = load_scraped_rates()
+
     all_results = []
     for product in get_base_data():
-        all_results.extend(build_multi_duration_product(product))
+        all_results.extend(build_multi_duration_product(product, df_rates))
 
     return {
-        "version": "TEST-MULTI-003",
+        "version": "TEST-MULTI-004",
+        "csv_found": CSV_PATH.exists(),
+        "csv_loaded": df_rates is not None,
         "count": len(all_results),
         "data": all_results
     }
@@ -134,9 +196,11 @@ def get_top5(
     age: int = Query(...),
     duration: str = Query(...)
 ):
+    df_rates = load_scraped_rates()
+
     all_results = []
     for product in get_base_data():
-        all_results.extend(build_multi_duration_product(product))
+        all_results.extend(build_multi_duration_product(product, df_rates))
 
     duration_input = duration.strip().lower()
 
@@ -158,7 +222,9 @@ def get_top5(
     filtered = sorted(filtered, key=lambda x: x["monthly_payout"], reverse=True)
 
     return {
-        "version": "TEST-MULTI-003",
+        "version": "TEST-MULTI-004",
+        "csv_found": CSV_PATH.exists(),
+        "csv_loaded": df_rates is not None,
         "requested": {
             "amount": amount,
             "age": age,
