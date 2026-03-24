@@ -17,6 +17,12 @@ app.add_middleware(
 BANK_DURATIONS = [5, 10, 15, 20]
 CSV_PATH = Path("scraped_rates.csv")
 
+# Mapping van jouw API-producten naar echte product_id in scraped_rates.csv
+PRODUCT_ID_MAP = {
+    "nn_basis": "NATIONALE-NEDERLANDEN_NNLIJF",
+    "nn_extra": "NATIONALE-NEDERLANDEN_NNLIJF",
+}
+
 
 def load_scraped_rates():
     if not CSV_PATH.exists():
@@ -40,23 +46,62 @@ def load_scraped_rates():
     return df
 
 
+def find_best_rate_from_csv(mapped_product_id, duration_years, df_rates):
+    if df_rates is None:
+        return None
+
+    months = duration_years * 12
+
+    df_provider = df_rates[df_rates["product_id"].astype(str) == str(mapped_product_id)].copy()
+    if df_provider.empty:
+        return None
+
+    df_provider["min_looptijd_maanden"] = pd.to_numeric(
+        df_provider["min_looptijd_maanden"], errors="coerce"
+    )
+    df_provider["max_looptijd_maanden"] = pd.to_numeric(
+        df_provider["max_looptijd_maanden"], errors="coerce"
+    )
+    df_provider["rente_percentage"] = pd.to_numeric(
+        df_provider["rente_percentage"], errors="coerce"
+    )
+
+    df_provider = df_provider.dropna(
+        subset=["min_looptijd_maanden", "max_looptijd_maanden", "rente_percentage"]
+    )
+
+    if df_provider.empty:
+        return None
+
+    # Eerst proberen op exacte match binnen range
+    exact_match = df_provider[
+        (df_provider["min_looptijd_maanden"] <= months) &
+        (df_provider["max_looptijd_maanden"] >= months)
+    ]
+
+    if not exact_match.empty:
+        try:
+            return float(exact_match.iloc[0]["rente_percentage"])
+        except Exception:
+            pass
+
+    # Anders dichtstbijzijnde min_looptijd pakken
+    df_provider["distance"] = (df_provider["min_looptijd_maanden"] - months).abs()
+    nearest = df_provider.sort_values(by=["distance", "min_looptijd_maanden"]).iloc[0]
+
+    try:
+        return float(nearest["rente_percentage"])
+    except Exception:
+        return None
+
+
 def get_rate_from_csv_or_fallback(product_key, duration, fallback_rate, df_rates):
-    months = duration * 12
+    mapped_product_id = PRODUCT_ID_MAP.get(product_key)
 
-    if df_rates is not None:
-        df_provider = df_rates[df_rates["product_id"].astype(str) == str(product_key)]
-
-        if not df_provider.empty:
-            match = df_provider[
-                (pd.to_numeric(df_provider["min_looptijd_maanden"], errors="coerce") <= months) &
-                (pd.to_numeric(df_provider["max_looptijd_maanden"], errors="coerce") >= months)
-            ]
-
-            if not match.empty:
-                try:
-                    return float(match.iloc[0]["rente_percentage"])
-                except Exception:
-                    pass
+    if mapped_product_id:
+        csv_rate = find_best_rate_from_csv(mapped_product_id, duration, df_rates)
+        if csv_rate is not None:
+            return csv_rate
 
     # fallback testdata als CSV niets bruikbaars geeft
     fallback_scraped_rates = {
@@ -128,6 +173,7 @@ def build_multi_duration_product(product, df_rates):
         row = fetch_single_duration(product, duration, df_rates)
         results.append(row)
 
+    # life = kopie van 20 jaar (bankproduct)
     row_20 = next((r for r in results if r["scenario_duration"] == 20), None)
 
     if row_20:
@@ -168,7 +214,7 @@ def root():
     csv_loaded = CSV_PATH.exists()
     return {
         "status": "api werkt",
-        "version": "TEST-MULTI-004",
+        "version": "TEST-MULTI-005",
         "csv_found": csv_loaded
     }
 
@@ -182,9 +228,10 @@ def debug():
         all_results.extend(build_multi_duration_product(product, df_rates))
 
     return {
-        "version": "TEST-MULTI-004",
+        "version": "TEST-MULTI-005",
         "csv_found": CSV_PATH.exists(),
         "csv_loaded": df_rates is not None,
+        "product_id_map": PRODUCT_ID_MAP,
         "count": len(all_results),
         "data": all_results
     }
@@ -222,7 +269,7 @@ def get_top5(
     filtered = sorted(filtered, key=lambda x: x["monthly_payout"], reverse=True)
 
     return {
-        "version": "TEST-MULTI-004",
+        "version": "TEST-MULTI-005",
         "csv_found": CSV_PATH.exists(),
         "csv_loaded": df_rates is not None,
         "requested": {
