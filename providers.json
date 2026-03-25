@@ -2,10 +2,30 @@
   {
     "provider_id": "BRAND-NEW-DAY",
     "provider_name": "Brand New Day",
-    "source_type": "html_table",
+    "source_type": "bnd_text",
     "url": "https://new.brandnewday.nl/rentestanden/",
     "product_id": "BRAND-NEW-DAY_BNDLIJF",
-    "table_hints": ["jaar", "rente", "looptijd"],
+    "table_hints": [],
+    "default_cost_once": 0.0,
+    "default_cost_periodic": 0.0
+  },
+  {
+    "provider_id": "NATIONALE-NEDERLANDEN",
+    "provider_name": "Nationale-Nederlanden",
+    "source_type": "html_table",
+    "url": "https://www.banksparen.nl/pensioen-lijfrente/renteoverzicht/nationale-nederlanden/banksparen-nationale-nederlanden.aspx",
+    "product_id": "NN_LIJFRENTE",
+    "table_hints": ["looptijd", "rente", "jaar"],
+    "default_cost_once": 75.0,
+    "default_cost_periodic": 0.48
+  },
+  {
+    "provider_id": "RABOBANK",
+    "provider_name": "Rabobank",
+    "source_type": "html_table",
+    "url": "https://www.banksparen.nl/pensioen-lijfrente/renteoverzicht/rabobank/banksparen-rabobank.aspx",
+    "product_id": "RABO_LIJFRENTE",
+    "table_hints": ["looptijd", "rente", "jaar"],
     "default_cost_once": 0.0,
     "default_cost_periodic": 0.0
   }
