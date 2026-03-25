@@ -60,16 +60,6 @@ def root():
     return {"status": "api werkt", "version": VERSION}
 
 
-@app.get("/debug")
-def debug():
-    data = load_data()
-    return {
-        "version": VERSION,
-        "records": len(data),
-        "sample": data[:5]
-    }
-
-
 @app.get("/top5")
 def top5(
     amount: float = Query(...),
@@ -94,10 +84,7 @@ def top5(
         once_cost = safe_float(row.get("kosten_eenmalig"), 0.0)
         periodic_cost = safe_float(row.get("kosten_periodiek"), 0.0)
 
-        # 1. eenmalige kosten gaan van het kapitaal af
         net_amount = max(amount - once_cost, 0)
-
-        # 2. periodieke kosten verlagen het effectieve rendement
         net_rate = max(gross_rate - periodic_cost, 0)
 
         monthly = calculate_monthly_payout(
