@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import csv
-from datetime import datetime
 
 app = FastAPI()
 
@@ -13,21 +12,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-VERSION = "TEST-MULTI-006"
+VERSION = "TEST-MULTI-007"
 
 
-# ===============================
-# HELPER: duration → maanden
-# ===============================
 def duration_to_months(duration):
     if duration == "life":
-        return 240  # fallback (20 jaar)
+        return 240
     return int(duration) * 12
 
 
-# ===============================
-# CSV laden
-# ===============================
 def load_data():
     data = []
     try:
@@ -36,21 +29,28 @@ def load_data():
             for row in reader:
                 data.append(row)
         return data
-    except:
+    except Exception:
         return []
 
 
-# ===============================
-# ROOT
-# ===============================
+def calculate_monthly_payout(amount: float, annual_rate_percent: float, months: int) -> float:
+    monthly_rate = annual_rate_percent / 100 / 12
+
+    if months <= 0:
+        return 0.0
+
+    if monthly_rate == 0:
+        return round(amount / months, 2)
+
+    payout = amount * (monthly_rate / (1 - (1 + monthly_rate) ** (-months)))
+    return round(payout, 2)
+
+
 @app.get("/")
 def root():
     return {"status": "api werkt", "version": VERSION}
 
 
-# ===============================
-# DEBUG
-# ===============================
 @app.get("/debug")
 def debug():
     data = load_data()
@@ -61,9 +61,6 @@ def debug():
     }
 
 
-# ===============================
-# TOP5
-# ===============================
 @app.get("/top5")
 def top5(
     amount: float = Query(...),
@@ -77,34 +74,29 @@ def top5(
 
     target_months = duration_to_months(duration)
 
-    # ===============================
-    # FILTER OP LOOPTJD
-    # ===============================
     filtered = [
         row for row in data
         if int(row["min_looptijd_maanden"]) <= target_months <= int(row["max_looptijd_maanden"])
     ]
 
-    # ===============================
-    # BEREKEN UITKERING (SIMPEL)
-    # ===============================
     results = []
     for row in filtered:
         rate = float(row["rente_percentage"])
 
-        monthly = (amount * (1 + rate / 100)) / (target_months / 12)
+        monthly = calculate_monthly_payout(
+            amount=amount,
+            annual_rate_percent=rate,
+            months=target_months
+        )
 
         results.append({
             "provider": row["provider_name"],
             "product": row["product_id"],
             "duration_months": target_months,
-            "monthly_payout": round(monthly, 2),
+            "monthly_payout": monthly,
             "rate": rate
         })
 
-    # ===============================
-    # SORTEREN
-    # ===============================
     results = sorted(results, key=lambda x: x["monthly_payout"], reverse=True)
 
     return {
