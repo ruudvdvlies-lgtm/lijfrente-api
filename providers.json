@@ -1,6 +1,12 @@
 [
   {
-    "name": "Brand New Day",
-    "module": "connectors.bnd"
+    "provider_id": "BRAND-NEW-DAY",
+    "provider_name": "Brand New Day",
+    "source_type": "html_table",
+    "url": "https://new.brandnewday.nl/rentestanden/",
+    "product_id": "BRAND-NEW-DAY_BNDLIJF",
+    "table_hints": ["jaar", "rente", "looptijd"],
+    "default_cost_once": 0.0,
+    "default_cost_periodic": 0.0
   }
 ]
