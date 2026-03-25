@@ -1,0 +1,22 @@
+[
+  {
+    "provider_id": "NATIONALE-NEDERLANDEN",
+    "provider_name": "Nationale-Nederlanden",
+    "source_type": "html_table",
+    "url": "https://www.banksparen.nl/lijfrentesparen/overzicht-maatschappijen/nationale-nederlanden-expirerende-lijfrente-banksparen-uitstellen.aspx",
+    "product_id": "NATIONALE-NEDERLANDEN_NNLIJF",
+    "table_hints": ["jaar", "rente", "looptijd"],
+    "default_cost_once": 75.0,
+    "default_cost_periodic": 0.48
+  },
+  {
+    "provider_id": "BRAND-NEW-DAY",
+    "provider_name": "Brand New Day",
+    "source_type": "html_table",
+    "url": "https://www.banksparen.nl/pensioen-lijfrente/renteoverzicht/brand-new-day/banksparen-brand-new-day.aspx",
+    "product_id": "BRAND-NEW-DAY_BNDLIJF",
+    "table_hints": ["jaar", "rente", "looptijd"],
+    "default_cost_once": 0.0,
+    "default_cost_periodic": 0.0
+  }
+]
