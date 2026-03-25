@@ -1,73 +1,178 @@
-# (alle imports en functies blijven gelijk hierboven)
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+import csv
+from pathlib import Path
+
+VERSION = "2026-03-25-bnd-fix"
+
+app = FastAPI(title="Lijfrente API", version=VERSION)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+DATA_FILE = Path(__file__).resolve().parent / "scraped_rates.csv"
+
+
+def load_data():
+    if not DATA_FILE.exists():
+        return []
+
+    with open(DATA_FILE, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    cleaned = []
+    for row in rows:
+        if not row:
+            continue
+        if not row.get("provider_id"):
+            continue
+        cleaned.append(row)
+
+    return cleaned
+
+
+def duration_to_months(duration: str) -> int:
+    d = str(duration).strip().lower()
+
+    mapping = {
+        "5": 60,
+        "5 jaar": 60,
+        "5j": 60,
+        "60": 60,
+        "60 maanden": 60,
+        "10": 120,
+        "10 jaar": 120,
+        "10j": 120,
+        "120": 120,
+        "120 maanden": 120,
+        "15": 180,
+        "15 jaar": 180,
+        "15j": 180,
+        "180": 180,
+        "180 maanden": 180,
+        "20": 240,
+        "20 jaar": 240,
+        "20j": 240,
+        "240": 240,
+        "240 maanden": 240,
+        "25": 300,
+        "25 jaar": 300,
+        "25j": 300,
+        "300": 300,
+        "300 maanden": 300,
+        "30": 360,
+        "30 jaar": 360,
+        "30j": 360,
+        "360": 360,
+        "360 maanden": 360,
+    }
+
+    if d in mapping:
+        return mapping[d]
+
+    if d.isdigit():
+        value = int(d)
+        if value <= 40:
+            return value * 12
+        return value
+
+    raise ValueError(f"Onbekende duration: {duration}")
+
+
+def calculate_monthly_payout(amount: float, annual_rate_percent: float, months: int) -> float:
+    if months <= 0:
+        return 0.0
+
+    monthly_rate = annual_rate_percent / 100.0 / 12.0
+
+    if monthly_rate == 0:
+        return amount / months
+
+    return amount * (monthly_rate / (1 - (1 + monthly_rate) ** (-months)))
+
+
+@app.get("/")
+def root():
+    data = load_data()
+    return {
+        "status": "ok",
+        "version": VERSION,
+        "records": len(data),
+        "data_file": str(DATA_FILE),
+        "sample": data[:5],
+    }
+
+
+@app.get("/health")
+def health():
+    data = load_data()
+    return {
+        "status": "healthy",
+        "version": VERSION,
+        "records": len(data),
+    }
+
 
 @app.get("/top5")
 def top5(
-    amount: float = Query(...),
-    age: int = Query(...),
-    duration: str = Query(...)
+    amount: float = Query(..., gt=0),
+    age: int = Query(..., ge=0),
+    duration: str = Query(...),
 ):
     data = load_data()
 
     if not data:
-        return {"error": "geen data"}
+        return {
+            "error": "geen data",
+            "version": VERSION,
+            "data_file": str(DATA_FILE),
+        }
 
     target_months = duration_to_months(duration)
 
     filtered = [
         row for row in data
-        if int(row["min_looptijd_maanden"]) <= target_months <= int(row["max_looptijd_maanden"])
+        if int(float(row["min_looptijd_maanden"])) <= target_months <= int(float(row["max_looptijd_maanden"]))
     ]
 
     results = []
     for row in filtered:
-        gross_rate = safe_float(row.get("rente_percentage"), 0.0)
-        once_cost = safe_float(row.get("kosten_eenmalig"), 0.0)
-        periodic_cost = safe_float(row.get("kosten_periodiek"), 0.0)
-
-        net_amount = max(amount - once_cost, 0)
-        net_rate = max(gross_rate - periodic_cost, 0)
+        rate = float(row["rente_percentage"])
 
         monthly = calculate_monthly_payout(
-            amount=net_amount,
-            annual_rate_percent=net_rate,
-            months=target_months
+            amount=amount,
+            annual_rate_percent=rate,
+            months=target_months,
         )
 
         results.append({
             "provider": row["provider_name"],
+            "provider_id": row["provider_id"],
             "product": row["product_id"],
             "duration_months": target_months,
-            "monthly_payout": monthly,
-            "gross_rate": round(gross_rate, 4),
-            "periodic_cost": round(periodic_cost, 4),
-            "net_rate": round(net_rate, 4),
-            "once_cost": round(once_cost, 2)
+            "monthly_payout": round(monthly, 2),
+            "rate": rate,
+            "kosten_eenmalig": float(row.get("kosten_eenmalig", 0) or 0),
+            "kosten_periodiek": float(row.get("kosten_periodiek", 0) or 0),
+            "bron_url": row.get("bron_url", ""),
         })
 
-    # sorteren
     results = sorted(results, key=lambda x: x["monthly_payout"], reverse=True)
-
-    # 🥇 BESTE KEUZE + verschil
-    if len(results) > 1:
-        best = results[0]
-        second = results[1]
-
-        difference = round(best["monthly_payout"] - second["monthly_payout"], 2)
-
-        best["label"] = "Beste keuze"
-        best["advantage_vs_next"] = difference
-
-        best["explanation"] = (
-            f"Deze optie levert €{difference} per maand meer op dan de volgende optie, "
-            f"na aftrek van kosten."
-        )
 
     return {
         "version": VERSION,
         "requested": {
             "amount": amount,
             "age": age,
-            "duration": duration
+            "duration": duration,
+            "target_months": target_months,
         },
-        "results": results[:5]
+        "count_filtered": len(results),
+        "results": results[:5],
     }
