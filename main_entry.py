@@ -12,7 +12,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-VERSION = "TEST-MULTI-007"
+VERSION = "TEST-MULTI-008"
 
 
 def duration_to_months(duration):
@@ -31,6 +31,15 @@ def load_data():
         return data
     except Exception:
         return []
+
+
+def safe_float(value, default=0.0):
+    try:
+        if value is None or value == "":
+            return default
+        return float(str(value).replace(",", "."))
+    except Exception:
+        return default
 
 
 def calculate_monthly_payout(amount: float, annual_rate_percent: float, months: int) -> float:
@@ -81,11 +90,19 @@ def top5(
 
     results = []
     for row in filtered:
-        rate = float(row["rente_percentage"])
+        gross_rate = safe_float(row.get("rente_percentage"), 0.0)
+        once_cost = safe_float(row.get("kosten_eenmalig"), 0.0)
+        periodic_cost = safe_float(row.get("kosten_periodiek"), 0.0)
+
+        # 1. eenmalige kosten gaan van het kapitaal af
+        net_amount = max(amount - once_cost, 0)
+
+        # 2. periodieke kosten verlagen het effectieve rendement
+        net_rate = max(gross_rate - periodic_cost, 0)
 
         monthly = calculate_monthly_payout(
-            amount=amount,
-            annual_rate_percent=rate,
+            amount=net_amount,
+            annual_rate_percent=net_rate,
             months=target_months
         )
 
@@ -94,7 +111,10 @@ def top5(
             "product": row["product_id"],
             "duration_months": target_months,
             "monthly_payout": monthly,
-            "rate": rate
+            "gross_rate": round(gross_rate, 4),
+            "periodic_cost": round(periodic_cost, 4),
+            "net_rate": round(net_rate, 4),
+            "once_cost": round(once_cost, 2)
         })
 
     results = sorted(results, key=lambda x: x["monthly_payout"], reverse=True)
