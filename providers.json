@@ -13,9 +13,9 @@
     "provider_id": "NATIONALE-NEDERLANDEN",
     "provider_name": "Nationale-Nederlanden",
     "source_type": "html_table",
-    "url": "https://www.banksparen.nl/pensioen-lijfrente/renteoverzicht/nationale-nederlanden/banksparen-nationale-nederlanden.aspx",
+    "url": "https://www.banksparen.nl/pensioen-lijfrente/renteoverzicht/nationale-nederlanden/aanvullende-pensioenuitkering.aspx",
     "product_id": "NN_LIJFRENTE",
-    "table_hints": ["looptijd", "rente", "jaar"],
+    "table_hints": ["looptijd", "rente", "actuele rente tarieven banksparen", "jaar"],
     "default_cost_once": 75.0,
     "default_cost_periodic": 0.48
   },
@@ -23,9 +23,9 @@
     "provider_id": "RABOBANK",
     "provider_name": "Rabobank",
     "source_type": "html_table",
-    "url": "https://www.banksparen.nl/pensioen-lijfrente/renteoverzicht/rabobank/banksparen-rabobank.aspx",
+    "url": "https://www.banksparen.nl/pensioen-lijfrente/renteoverzicht/rabobank/toekomstuitkering.aspx",
     "product_id": "RABO_LIJFRENTE",
-    "table_hints": ["looptijd", "rente", "jaar"],
+    "table_hints": ["looptijd", "rente", "actuele rente tarieven banksparen", "jaar"],
     "default_cost_once": 0.0,
     "default_cost_periodic": 0.0
   }
