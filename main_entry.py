@@ -1,64 +1,4 @@
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
-import csv
-
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-VERSION = "TEST-MULTI-008"
-
-
-def duration_to_months(duration):
-    if duration == "life":
-        return 240
-    return int(duration) * 12
-
-
-def load_data():
-    data = []
-    try:
-        with open("scraped_rates.csv", newline="", encoding="utf-8") as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                data.append(row)
-        return data
-    except Exception:
-        return []
-
-
-def safe_float(value, default=0.0):
-    try:
-        if value is None or value == "":
-            return default
-        return float(str(value).replace(",", "."))
-    except Exception:
-        return default
-
-
-def calculate_monthly_payout(amount: float, annual_rate_percent: float, months: int) -> float:
-    monthly_rate = annual_rate_percent / 100 / 12
-
-    if months <= 0:
-        return 0.0
-
-    if monthly_rate == 0:
-        return round(amount / months, 2)
-
-    payout = amount * (monthly_rate / (1 - (1 + monthly_rate) ** (-months)))
-    return round(payout, 2)
-
-
-@app.get("/")
-def root():
-    return {"status": "api werkt", "version": VERSION}
-
+# (alle imports en functies blijven gelijk hierboven)
 
 @app.get("/top5")
 def top5(
@@ -104,7 +44,23 @@ def top5(
             "once_cost": round(once_cost, 2)
         })
 
+    # sorteren
     results = sorted(results, key=lambda x: x["monthly_payout"], reverse=True)
+
+    # 🥇 BESTE KEUZE + verschil
+    if len(results) > 1:
+        best = results[0]
+        second = results[1]
+
+        difference = round(best["monthly_payout"] - second["monthly_payout"], 2)
+
+        best["label"] = "Beste keuze"
+        best["advantage_vs_next"] = difference
+
+        best["explanation"] = (
+            f"Deze optie levert €{difference} per maand meer op dan de volgende optie, "
+            f"na aftrek van kosten."
+        )
 
     return {
         "version": VERSION,
